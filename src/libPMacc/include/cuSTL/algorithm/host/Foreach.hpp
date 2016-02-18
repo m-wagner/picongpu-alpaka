@@ -41,13 +41,6 @@ namespace algorithm
 namespace host
 {
 
-#ifndef FOREACH_HOST_MAX_PARAMS
-#define FOREACH_HOST_MAX_PARAMS 4
-#endif
-
-#define SHIFT_CURSOR_ZONE(Z, N, _) C ## N c ## N ## _shifted = c ## N (p_zone.offset);
-#define SHIFTACCESS_SHIFTEDCURSOR(Z, N, _) forward(c ## N ## _shifted [cellIndex])
-
 namespace detail
 {
     /** Return pseudo 3D-range of the zone as math::Int<dim> */
@@ -83,28 +76,6 @@ namespace detail
     };
 } // namespace detail
 
-#define FOREACH_OPERATOR(Z, N, _)                                              \
-    template<typename Zone, BOOST_PP_ENUM_PARAMS(N, typename C), typename Functor> \
-    void operator()(const Zone& p_zone, BOOST_PP_ENUM_BINARY_PARAMS(N, C, c), const Functor& functor) \
-    {                                                                          \
-        BOOST_PP_REPEAT(N, SHIFT_CURSOR_ZONE, _)                               \
-                                                                               \
-        typename lambda::result_of::make_Functor<Functor>::type fun            \
-            = lambda::make_Functor(functor);                                   \
-        detail::GetRange<Zone::dim> getRange;                                  \
-        for(int z = 0; z < getRange(p_zone).z(); z++)                           \
-        {                                                                      \
-            for(int y = 0; y < getRange(p_zone).y(); y++)                       \
-            {                                                                  \
-                for(int x = 0; x < getRange(p_zone).x(); x++)                   \
-                {                                                              \
-                    math::Int<Zone::dim> cellIndex =                           \
-                        math::Int<3u>(x, y, z).shrink<Zone::dim>();            \
-                    fun(BOOST_PP_ENUM(N, SHIFTACCESS_SHIFTEDCURSOR, _));       \
-                }                                                              \
-            }                                                                  \
-        }                                                                      \
-    }
 
 /** Foreach algorithm (restricted to 3D)
  */
@@ -120,12 +91,53 @@ struct Foreach
      * It is called like functor(*cursor0(cellId), ..., *cursorN(cellId))
      *
      */
-    BOOST_PP_REPEAT_FROM_TO(1, BOOST_PP_INC(FOREACH_HOST_MAX_PARAMS), FOREACH_OPERATOR, _)
-};
+    template<
+        typename Zone,
+        typename Functor,
+        typename... T_Type>
+    void operator()(
+        const Zone& p_zone,
+        const Functor& functor,
+        T_Type ... ts)
+    {
+        forEachShifted(
+            p_zone,
+            functor,
+            ts(p_zone.offset)...);
+    }
 
-#undef FOREACH_OPERATOR
-#undef SHIFT_CURSOR_ZONE
-#undef SHIFTACCESS_SHIFTEDCURSOR
+private:
+    /*
+     *
+     */
+    template<
+        typename Zone,
+        typename Functor,
+        typename... T_ShiftedTypes
+    >
+    void forEachShifted(
+        const Zone& p_zone,
+        const Functor& functor,
+        T_ShiftedTypes ... shiftedTs)
+    {
+        typename lambda::result_of::make_Functor<Functor>::type fun =
+            lambda::make_Functor(functor);
+
+        detail::GetRange<Zone::dim> getRange;
+        for(int z = 0; z < getRange(p_zone).z(); z++)
+        {
+            for(int y = 0; y < getRange(p_zone).y(); y++)
+            {
+                for(int x = 0; x < getRange(p_zone).x(); x++)
+                {
+                    math::Int<Zone::dim> cellIndex =
+                        math::Int<3u>(x, y, z).shrink<Zone::dim>();
+                    fun( forward(shiftedTs[cellIndex]) ...);
+                }
+            }
+        }
+    }
+};
 
 } // host
 } // algorithm
