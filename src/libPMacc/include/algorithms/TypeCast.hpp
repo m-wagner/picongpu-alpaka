@@ -22,6 +22,8 @@
 
 #pragma once
 
+#include "types.h"
+
 namespace PMacc
 {
 namespace algorithms
