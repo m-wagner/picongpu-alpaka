@@ -23,7 +23,6 @@
 #pragma once
 
 
-#include <builtin_types.h>
 #include "types.h"
 #include <string>
 #include <ostream>
@@ -31,24 +30,14 @@
 
 namespace PMacc
 {
-namespace
-{
 
-DINLINE void atomicAddWrapper(float* address, float value)
+template<
+    typename T_Acc,
+    typename T_Type
+>
+DINLINE void atomicAddWrapper(const T_Acc& acc, T_Type * const address, const T_Type& value)
 {
-    atomicAdd(address, value);
-}
-
-DINLINE void atomicAddWrapper(double* inAddress, double value)
-{
-    uint64_cu* address = (uint64_cu*) inAddress;
-    double old = value;
-    while (
-           (old = __longlong_as_double(atomicExch(address,
-                                                  (uint64_cu) __double_as_longlong(__longlong_as_double(atomicExch(address, (uint64_cu) 0L)) +
-                                                                                   old)))) != 0.0);
-}
-
+    ::alpaka::atomic::atomicOp<::alpaka::atomic::op::Add>(acc, address, value);
 }
 
 } //namespace PMacc
