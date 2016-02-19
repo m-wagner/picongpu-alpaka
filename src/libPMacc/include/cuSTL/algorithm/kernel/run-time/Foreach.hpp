@@ -52,35 +52,6 @@ namespace kernel
 namespace RT
 {
 
-#ifndef FOREACH_KERNEL_MAX_PARAMS
-#define FOREACH_KERNEL_MAX_PARAMS 4
-#endif
-
-#define SHIFT_CURSOR_ZONE(Z, N, _) C ## N c ## N ## _shifted = c ## N (p_zone.offset);
-#define SHIFTED_CURSOR(Z, N, _) c ## N ## _shifted
-
-#define FOREACH_OPERATOR(Z, N, _)                                                                                   \
-    /*                      typename C0, ..., typename CN            */                                             \
-    template<typename Zone, BOOST_PP_ENUM_PARAMS(N, typename C), typename Functor>                                  \
-                                /*     C0 c0, ..., CN cN  */                                                        \
-    void operator()(const Zone& p_zone, BOOST_PP_ENUM_BINARY_PARAMS(N, C, c), const Functor& functor)                \
-    {                                                                                                               \
-        /* C0 c0_shifted = c0(p_zone.offset); ...; CN cN_shifted = cN(p_zone.offset); */                              \
-        BOOST_PP_REPEAT(N, SHIFT_CURSOR_ZONE, _)                                                                    \
-                                                                                                                    \
-        /* the maximum number of threads per block for devices with                                                 \
-         * compute capability > 2.0 is 1024 */                                                                      \
-        assert(this->_blockDim.productOfComponents()<=1024);                                                        \
-        /* the maximum block size in z direction is 64 for all compute capabilities */                              \
-        assert(this->_blockDim.z()<=64);                                                                            \
-        dim3 blockDim(this->_blockDim.x(), this->_blockDim.y(), this->_blockDim.z());                               \
-        kernel::detail::SphericMapper<Zone::dim> mapper;                                                            \
-        using namespace PMacc;                                                                                      \
-        __cudaKernel(kernel::detail::kernelForeach)(mapper.cudaGridDim(p_zone.size, this->_blockDim), blockDim)      \
-                /*   c0_shifted, ..., cN_shifted    */                                                              \
-            (mapper, BOOST_PP_ENUM(N, SHIFTED_CURSOR, _), lambda::make_Functor(functor));                           \
-    }
-
 /** Foreach algorithm that calls a cuda kernel
  *
  * This is the run-time version of kernel::Foreach where the
@@ -109,12 +80,59 @@ struct Foreach
      * It is called like functor(*cursor0(cellId), ..., *cursorN(cellId))
      *
      */
-    BOOST_PP_REPEAT_FROM_TO(1, BOOST_PP_INC(FOREACH_KERNEL_MAX_PARAMS), FOREACH_OPERATOR, _)
-};
+    template<
+        typename Zone,
+        typename Functor,
+        typename... TCs
+    >
+    void operator()(
+        const Zone& p_zone,
+        const Functor& functor,
+        TCs ... cs)
+    {
+        forEachShifted(
+            p_zone,
+            functor,
+            cs(p_zone.offset)...);
+    }
 
-#undef FOREACH_OPERATOR
-#undef SHIFT_CURSOR_ZONE
-#undef SHIFTED_CURSOR
+private:
+
+    /*
+     *
+     */
+    template<
+        typename Zone,
+        typename Functor,
+        typename... TShiftedCs
+    >
+    void forEachShifted(
+        const Zone& p_zone,
+        const Functor& functor,
+        TShiftedCs... shiftedCs)
+    {
+        /* the maximum number of threads per block for devices with compute capability > 2.0 is 1024 */
+        assert(this->_blockDim.productOfComponents() <= 1024);
+        /* the maximum block size in z direction is 64 for all compute capabilities */
+        assert(this->_blockDim.z()<=64);
+        DataSpace<3> blockDim(
+            this->_blockDim.x(),
+            this->_blockDim.y(),
+            this->_blockDim.z());
+
+        kernel::detail::SphericMapper<Zone::dim> mapper;
+
+
+        __cudaKernel(kernel::detail::kernelForeach)(
+            mapper.cudaGridDim(p_zone.size,
+            this->_blockDim), blockDim
+        )(
+            mapper,
+            PMacc::lambda::make_Functor(functor),
+            shiftedCs...
+        );
+    }
+};
 
 } // namespace RT
 } // namespace kernel

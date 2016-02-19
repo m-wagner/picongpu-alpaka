@@ -46,31 +46,6 @@ namespace algorithm
 namespace kernel
 {
 
-#ifndef FOREACH_KERNEL_MAX_PARAMS
-#define FOREACH_KERNEL_MAX_PARAMS 4
-#endif
-#define SHIFT_CURSOR_ZONE(Z, N, _) C ## N c ## N ## _shifted = c ## N (p_zone.offset);
-#define SHIFTED_CURSOR(Z, N, _) c ## N ## _shifted
-
-#define FOREACH_OPERATOR(Z, N, _)                                                                           \
-                         /* typename C0, typename C1, ... */                                                \
-    template<typename Zone, BOOST_PP_ENUM_PARAMS(N, typename C), typename Functor>                          \
-                                    /* C0 c0, C1 c1, ... */                                                 \
-    void operator()(const Zone& p_zone, BOOST_PP_ENUM_BINARY_PARAMS(N, C, c), const Functor& functor)        \
-    {                                                                                                       \
-        /* C0 c0_shifted = c0(p_zone.offset); */                                                             \
-        /* C1 c1_shifted = c1(p_zone.offset); */                                                             \
-        /* ... */                                                                                           \
-        BOOST_PP_REPEAT(N, SHIFT_CURSOR_ZONE, _)                                                            \
-                                                                                                            \
-        dim3 blockDim(BlockDim::toRT().toDim3());                                                           \
-        detail::SphericMapper<Zone::dim, BlockDim> mapper;                                                  \
-        using namespace PMacc;                                                                              \
-        __cudaKernel(detail::kernelForeach)(mapper.cudaGridDim(p_zone.size), blockDim)                       \
-                  /* c0_shifted, c1_shifted, ... */                                                         \
-            (mapper, BOOST_PP_ENUM(N, SHIFTED_CURSOR, _), lambda::make_Functor(functor));                   \
-    }
-
 /** Foreach algorithm that calls a cuda kernel
  *
  * \tparam BlockDim 3D compile-time vector (PMacc::math::CT::Int) of the size of the cuda blockDim.
@@ -91,12 +66,49 @@ struct Foreach
      * It is called like functor(*cursor0(cellId), ..., *cursorN(cellId))
      *
      */
-    BOOST_PP_REPEAT_FROM_TO(1, BOOST_PP_INC(FOREACH_KERNEL_MAX_PARAMS), FOREACH_OPERATOR, _)
-};
+    template<
+        typename Zone,
+        typename Functor,
+        typename... TCs
+    >
+    void operator()(
+        const Zone& p_zone,
+        const Functor& functor,
+        TCs ... cs)
+    {
+        forEachShifted(
+            p_zone,
+            functor,
+            cs(p_zone.offset)...);
+    }
+private:
 
-#undef FOREACH_OPERATOR
-#undef SHIFT_CURSOR_ZONE
-#undef SHIFTED_CURSOR
+    /*
+     *
+     */
+    template<
+        typename Zone,
+        typename Functor,
+        typename... TShiftedCs
+    >
+    void forEachShifted(
+        const Zone& p_zone,
+        const Functor& functor,
+        TShiftedCs... shiftedCs)
+    {
+        PMACC_AUTO(blockDim,BlockDim::toRT());
+        detail::SphericMapper<Zone::dim, BlockDim> mapper;
+        using namespace PMacc;
+        __cudaKernel(detail::kernelForeach)(
+            mapper.cudaGridDim(p_zone.size),
+            blockDim
+        )(
+            mapper,
+            lambda::make_Functor(functor),
+            shiftedCs...
+        );
+    }
+};
 
 } // kernel
 } // algorithm

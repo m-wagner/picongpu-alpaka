@@ -36,34 +36,6 @@ namespace algorithm
 namespace cudaBlock
 {
 
-#ifndef FOREACH_KERNEL_MAX_PARAMS
-#define FOREACH_KERNEL_MAX_PARAMS 4
-#endif
-
-#define SHIFTACCESS_CURSOR(Z, N, _) forward(c ## N [pos])
-
-#define FOREACH_OPERATOR(Z, N, _)                                                  \
-    /*      <             , typename C0, ..., typename C(N-1)  ,              > */ \
-    template<typename Zone, BOOST_PP_ENUM_PARAMS(N, typename C), typename Functor> \
-    /*                     (      C0 c0, ..., C(N-1) c(N-1)           ,       ) */ \
-    DINLINE void operator()(Zone, BOOST_PP_ENUM_BINARY_PARAMS(N, C, c), const Functor& functor) \
-    {                                                                              \
-        BOOST_AUTO(functor_, lambda::make_Functor(functor));                       \
-        const int dataVolume = math::CT::volume<typename Zone::Size>::type::value; \
-        const int blockVolume = math::CT::volume<BlockDim>::type::value;           \
-                                                                                   \
-        typedef typename math::Int<Zone::dim> PosType;                             \
-        using namespace PMacc::algorithms::precisionCast;                          \
-                                                                                   \
-        for(int i = this->linearThreadIdx; i < dataVolume; i += blockVolume)       \
-        {                                                                          \
-            PosType pos = Zone::Offset().toRT() +                                  \
-                          precisionCast<typename PosType::type>(                   \
-                            math::MapToPos<Zone::dim>()( Zone::Size(), i ) );      \
-            functor_(BOOST_PP_ENUM(N, SHIFTACCESS_CURSOR, _));                     \
-        }                                                                          \
-    }
-
 /** Foreach algorithm that is executed by one cuda thread block
  *
  * \tparam BlockDim 3D compile-time vector (PMacc::math::CT::Int) of the size of the cuda blockDim.
@@ -77,12 +49,8 @@ struct Foreach
 private:
     const int linearThreadIdx;
 public:
-    DINLINE Foreach()
-     : linearThreadIdx(
-        threadIdx.z * BlockDim::x::value * BlockDim::y::value +
-        threadIdx.y * BlockDim::x::value +
-        threadIdx.x) {}
-    DINLINE Foreach(int linearThreadIdx) : linearThreadIdx(linearThreadIdx) {}
+
+     DINLINE Foreach(int linearThreadIdx) : linearThreadIdx(linearThreadIdx) {}
 
     /* operator()(zone, cursor0, cursor1, ..., cursorN-1, functor or lambdaFun)
      *
@@ -94,11 +62,26 @@ public:
      * It is called like functor(*cursor0(cellId), ..., *cursorN(cellId))
      *
      */
-    BOOST_PP_REPEAT_FROM_TO(1, BOOST_PP_INC(FOREACH_KERNEL_MAX_PARAMS), FOREACH_OPERATOR, _)
-};
 
-#undef SHIFTACCESS_CURSOR
-#undef FOREACH_OPERATOR
+    template<typename Zone, typename Functor, typename... T_Types>
+    DINLINE void operator()(Zone, const Functor& functor, T_Types ... ts)
+    {
+        BOOST_AUTO(functor_, lambda::make_Functor(functor));
+        const int dataVolume = math::CT::volume<typename Zone::Size>::type::value;
+        const int blockVolume = math::CT::volume<BlockDim>::type::value;
+
+        typedef typename math::Int<Zone::dim> PosType;
+        using namespace PMacc::algorithms::precisionCast;
+
+        for(int i = this->linearThreadIdx; i < dataVolume; i += blockVolume)
+        {
+            PosType pos = Zone::Offset().toRT() +
+                          precisionCast<typename PosType::type>(
+                            math::MapToPos<Zone::dim>()( Zone::Size(), i ) );
+            functor_( forward(ts[pos]) ...);
+        }
+    }
+};
 
 } // cudaBlock
 } // algorithm
