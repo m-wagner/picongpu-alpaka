@@ -24,6 +24,7 @@
 
 cmake_minimum_required(VERSION 3.1.0)
 
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 ################################################################################
 # Project 
@@ -43,50 +44,6 @@ set(CMAKE_PREFIX_PATH "/usr/lib/x86_64-linux-gnu/" "$ENV{MPI_ROOT}"
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
     ${CMAKE_CURRENT_SOURCE_DIR}/../../thirdParty/cmake-modules/)
 
-
-################################################################################
-# Find CUDA 
-################################################################################
-
-find_package(CUDA 5.0 REQUIRED)
-
-if(CUDA_VERSION VERSION_LESS 5.5)
-    message(STATUS "CUDA Toolkit < 5.5 detected. We strongly recommend to still "
-                   "use CUDA 5.5+ drivers (319.82 or higher)!")
-endif(CUDA_VERSION VERSION_LESS 5.5)
-
-set(CUDA_ARCH sm_20 CACHE STRING "Set GPU architecture")
-string(COMPARE EQUAL ${CUDA_ARCH} "sm_10" IS_CUDA_ARCH_UNSUPPORTED)
-string(COMPARE EQUAL ${CUDA_ARCH} "sm_11" IS_CUDA_ARCH_UNSUPPORTED)
-string(COMPARE EQUAL ${CUDA_ARCH} "sm_12" IS_CUDA_ARCH_UNSUPPORTED)
-string(COMPARE EQUAL ${CUDA_ARCH} "sm_13" IS_CUDA_ARCH_UNSUPPORTED)
-
-if(IS_CUDA_ARCH_UNSUPPORTED)
-    message(FATAL_ERROR "Unsupported CUDA architecture ${CUDA_ARCH} specified. "
-                       "SM 2.0 or higher is required.")
-endif(IS_CUDA_ARCH_UNSUPPORTED)
-
-set(CUDA_FTZ "--ftz=false" CACHE STRING "Set flush to zero for GPU")
-
-set(CUDA_MATH --use_fast_math CACHE STRING "Enable fast-math" )
-option(CUDA_SHOW_REGISTER "Show kernel registers and create PTX" OFF)
-option(CUDA_KEEP_FILES "Keep all intermediate files that are generated during internal compilation steps (folder: nvcc_tmp)" OFF)
-option(CUDA_SHOW_CODELINES "Show kernel lines in cuda-gdb and cuda-memcheck" OFF)
-
-if(CUDA_SHOW_CODELINES)
-    set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS}" --source-in-ptx -Xcompiler -rdynamic -lineinfo)
-    set(CUDA_KEEP_FILES ON CACHE BOOL "activate keep files" FORCE)
-endif(CUDA_SHOW_CODELINES)
-
-set(CUDA_NVCC_FLAGS ${CUDA_NVCC_FLAGS} ${nvcc_flags} -arch=${CUDA_ARCH} ${CUDA_MATH} ${CUDA_FTZ})
-if(CUDA_SHOW_REGISTER)
-    set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS}" -Xptxas=-v)
-endif(CUDA_SHOW_REGISTER)
-
-if(CUDA_KEEP_FILES)
-    file(MAKE_DIRECTORY "${PROJECT_BINARY_DIR}/nvcc_tmp")
-    set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS}" --keep --keep-dir "${PROJECT_BINARY_DIR}/nvcc_tmp")
-endif(CUDA_KEEP_FILES)
 
 ################################################################################
 # C++11 Enabler
@@ -226,6 +183,18 @@ else(PIC_RELEASE)
     set(CMAKE_BUILD_TYPE Debug)
     set(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS}" -g "-Xcompiler=-g,-pthread")
 endif(PIC_RELEASE)
+
+
+################################################################################
+# Find PMacc.
+################################################################################
+SET("PMACC_ROOT" "${CMAKE_CURRENT_LIST_DIR}/../libPMacc" CACHE STRING  "The location of the PMacc library")
+LIST(APPEND CMAKE_MODULE_PATH "${PMACC_ROOT}")
+
+find_package(PMacc REQUIRED)
+add_definitions(${PMacc_DEFINITIONS})
+include_directories(${PMacc_INCLUDE_DIRS})
+list(APPEND LIBS ${PMacc_LIBRARIES})
 
 
 ################################################################################
@@ -490,15 +459,23 @@ include_directories(BEFORE ${PIC_EXTENSION_PATH}/include)
 file(GLOB CUDASRCFILES "*.cu")
 file(GLOB SRCFILES "*.cpp")
 
+append_recursive_files_add_to_src_group("${CMAKE_CURRENT_LIST_DIR}/include" "${CMAKE_CURRENT_LIST_DIR}" "hpp" _PICONGPU_FILES_HEADER)
+append_recursive_files_add_to_src_group("${CMAKE_CURRENT_LIST_DIR}/" "${CMAKE_CURRENT_LIST_DIR}" "cpp" _PICONGPU_FILES_SOURCE)
 
+list(APPEND LIBS "z")
+list(APPEND LIBS "m")
 
-cuda_add_executable(picongpu
-    ${CUDASRCFILES}
-    ${SRCFILES}
-    ${SCOREP_SRCFILES}
-)
+# Always add all files to the target executable build call to add them to the build project.
+alpaka_add_executable(
+    "picongpu"
+    ${_PICONGPU_FILES_HEADER}
+    ${_PICONGPU_FILES_SOURCE})
 
-target_link_libraries(picongpu  ${LIBS} ${CUDA_CUDART_LIBRARY} z m)
+# Set the link libraries for this library (adds libs, include directories, defines and compile options).
+target_link_libraries(
+    "picongpu"
+    PUBLIC "alpaka"
+    PUBLIC ${LIBS})
 
 if(SCOREP_ENABLE)
     # Score-P libraries must be linked after the object to prevent symbols
